@@ -1,0 +1,76 @@
+name: nextoken-local
+
+services:
+  app:
+    build: .
+    container_name: nextoken-local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_PORT:-3100}:3100"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nextoken}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-nextoken}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      REDIS_REQUIRED: "true"
+      ROUTE_FAILURE_THRESHOLD: ${ROUTE_FAILURE_THRESHOLD:-3}
+      ROUTE_COOLDOWN_SECONDS: ${ROUTE_COOLDOWN_SECONDS:-60}
+      APP_SECRET: ${APP_SECRET:?APP_SECRET is required}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://127.0.0.1:3100,http://localhost:3100}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      TZ: ${TZ:-Asia/Taipei}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3100/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - frontend
+      - backend
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nextoken}
+      POSTGRES_USER: ${POSTGRES_USER:-nextoken}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      TZ: ${TZ:-Asia/Taipei}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nextoken} -d ${POSTGRES_DB:-nextoken}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a '${REDIS_PASSWORD}' ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  frontend:
+  backend:
+    internal: true

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NexToken - 客戶控制台</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root{--bg:#0a0e13;--panel:#131b24;--panel2:#1a2530;--line:#2b3744;--text:#eef3f7;--muted:#94a2b0;--gold:#f2c94c;--green:#42d392;--red:#ff8585}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,"Noto Sans TC",system-ui,sans-serif}button,input{font:inherit}.hidden{display:none!important}.top{height:64px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;padding:0 24px}.brand{font-weight:800;color:var(--gold)}.brand span{color:var(--text)}a{color:var(--gold);text-decoration:none}.auth{min-height:calc(100vh - 64px);display:grid;place-items:center;padding:20px}.auth-box{width:min(430px,100%);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:24px}.tabs{display:flex;border-bottom:1px solid var(--line);margin-bottom:16px}.tabs button{flex:1;border:0;background:transparent;color:var(--muted);padding:10px;cursor:pointer}.tabs button.on{color:var(--gold);border-bottom:2px solid var(--gold)}label{display:block;color:var(--muted);font-size:12px;margin:12px 0 5px}input{width:100%;background:#080c11;border:1px solid var(--line);border-radius:6px;color:var(--text);padding:10px}.primary,.secondary{padding:9px 12px;border-radius:6px;font-weight:700;cursor:pointer}.primary{background:var(--gold);border:1px solid var(--gold);color:#111}.secondary{background:var(--panel2);border:1px solid var(--line);color:var(--text)}form>.primary{width:100%;margin-top:18px}.error{color:var(--red);font-size:13px;min-height:20px}.hint{color:var(--muted);font-size:12px;line-height:1.6}.divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:16px 0}.divider:before,.divider:after{content:"";height:1px;background:var(--line);flex:1}.google-wrap{display:grid;gap:8px}.google-disabled{border:1px dashed var(--line);border-radius:7px;padding:10px;color:var(--muted);font-size:13px}.console{max-width:1100px;margin:auto;padding:25px 20px 60px}.summary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:22px}.summary>div,.card{border:1px solid var(--line);background:var(--panel);padding:16px;border-radius:7px}.summary span,.card span{display:block;color:var(--muted);font-size:12px}.summary b{font-size:22px}.section{margin-top:24px}.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.section-head h2{font-size:18px;margin:0}.api-box{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:14px}.api-box code{display:block;color:#cce0f5;overflow:auto}.table{border:1px solid var(--line);border-radius:7px;overflow:auto}table{width:100%;border-collapse:collapse;min-width:680px}th,td{padding:10px 11px;border-bottom:1px solid var(--line);font-size:13px;text-align:left}th{background:var(--panel2);color:var(--muted);font-size:11px}td{background:var(--panel)}tr:last-child td{border:0}.key-reveal{padding:14px;background:#0b1218;border:1px solid var(--gold);border-radius:7px;margin-bottom:10px}.key-reveal code{display:block;overflow:auto;margin:7px 0;color:var(--gold)}.empty{padding:25px;background:var(--panel);text-align:center;color:var(--muted)}.ok{color:var(--green)}.off{color:var(--muted)}@media(max-width:760px){.top{padding:0 14px}.summary{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="top"><div class="brand">Nex<span>Token</span></div><div><a href="/">返回首頁</a> <button id="logout" class="secondary hidden">登出</button></div></header>
+<section id="authView" class="auth">
+  <div class="auth-box">
+    <div class="tabs"><button id="loginTab" class="on">登入</button><button id="registerTab">註冊</button></div>
+    <form id="authForm">
+      <label>Email</label><input id="email" type="email" required autocomplete="email">
+      <label>密碼</label><input id="password" type="password" minlength="8" required autocomplete="current-password">
+      <button class="primary" id="authButton">登入</button>
+      <div class="error" id="authError"></div>
+    </form>
+    <div class="divider">或使用 Gmail</div>
+    <div class="google-wrap">
+      <div id="googleLogin"></div>
+      <div id="googleDisabled" class="google-disabled hidden">尚未設定 GOOGLE_CLIENT_ID，Gmail 登入暫不可用。</div>
+    </div>
+  </div>
+</section>
+<main id="consoleView" class="console hidden">
+  <div class="summary">
+    <div><span>帳號</span><b id="accountEmail"></b></div>
+    <div><span>可用餘額</span><b id="balance"></b></div>
+    <div><span>Gmail 綁定</span><b id="gmailStatus"></b></div>
+  </div>
+  <section class="section">
+    <div class="section-head"><h2>帳號安全</h2></div>
+    <div class="card">
+      <span>Gmail</span>
+      <p id="gmailDetail" class="hint"></p>
+      <div id="googleBind"></div>
+    </div>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>API 連線資訊</h2></div>
+    <div class="api-box"><span>Base URL</span><code id="baseUrl"></code></div>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>API Keys</h2><button class="primary" id="createKey">建立 API Key</button></div>
+    <div id="newKey"></div><div id="keys"></div>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>最近使用紀錄</h2><button class="secondary" id="refresh">重新整理</button></div>
+    <div id="usage"></div>
+  </section>
+</main>
+<script>
+let mode='login',token=localStorage.getItem('nex_customer_token')||'',googleClientId='',meCache=null;
+const $=id=>document.getElementById(id),money=v=>'$'+Number(v||0).toFixed(4);
+function setMode(m){mode=m;loginTab.classList.toggle('on',m==='login');registerTab.classList.toggle('on',m==='register');authButton.textContent=m==='login'?'登入':'建立帳號';password.autocomplete=m==='login'?'current-password':'new-password'}
+loginTab.onclick=()=>setMode('login');registerTab.onclick=()=>setMode('register');
+async function api(path,opt={}){opt.headers={...(opt.headers||{}),'Content-Type':'application/json',Authorization:'Bearer '+token};const r=await fetch(path,opt);const d=await r.json();if(r.status===401){signout();throw new Error('登入已過期，請重新登入')}if(!r.ok)throw new Error(d.detail||'請求失敗');return d}
+async function publicApi(path,opt={}){opt.headers={...(opt.headers||{}),'Content-Type':'application/json'};const r=await fetch(path,opt);const d=await r.json();if(!r.ok)throw new Error(d.detail||'請求失敗');return d}
+authForm.onsubmit=async e=>{e.preventDefault();authError.textContent='';try{const d=await publicApi('/api/customer/'+mode,{method:'POST',body:JSON.stringify({email:email.value,password:password.value})});token=d.token;localStorage.setItem('nex_customer_token',token);showConsole()}catch(err){authError.textContent=err.message}};
+function signout(){token='';meCache=null;localStorage.removeItem('nex_customer_token');consoleView.classList.add('hidden');authView.classList.remove('hidden');logout.classList.add('hidden')}
+logout.onclick=signout;
+async function handleGoogleCredential(response,purpose){try{const path=purpose==='bind'?'/api/customer/google/bind':'/api/customer/google/login';const d=purpose==='bind'?await api(path,{method:'POST',body:JSON.stringify({credential:response.credential})}):await publicApi(path,{method:'POST',body:JSON.stringify({credential:response.credential})});if(d.token){token=d.token;localStorage.setItem('nex_customer_token',token)}await showConsole()}catch(err){authError.textContent=err.message;alert(err.message)}}
+function renderGoogleButton(target,purpose){if(!googleClientId||!window.google)return;target.innerHTML='';google.accounts.id.initialize({client_id:googleClientId,callback:r=>handleGoogleCredential(r,purpose)});google.accounts.id.renderButton(target,{theme:'outline',size:'large',text:purpose==='bind'?'continue_with':'signin_with',shape:'rectangular',width:300})}
+async function initGoogle(){const cfg=await publicApi('/api/auth/google/config');googleClientId=cfg.client_id||'';googleDisabled.classList.toggle('hidden',cfg.enabled);if(!cfg.enabled)return;const wait=()=>window.google?renderGoogleButton(googleLogin,'login'):setTimeout(wait,100);wait()}
+async function showConsole(){try{const me=await api('/api/customer/me');meCache=me;authView.classList.add('hidden');consoleView.classList.remove('hidden');logout.classList.remove('hidden');accountEmail.textContent=me.email;balance.textContent=money(me.balance);gmailStatus.textContent=me.gmail?'已綁定':'未綁定';gmailStatus.className=me.gmail?'ok':'off';gmailDetail.textContent=me.gmail?`已綁定 ${me.gmail}，時間：${new Date(me.gmail_bound_at).toLocaleString()}`:'綁定 Gmail 後可用 Gmail 快速登入，後台也能辨識已驗證客戶。';baseUrl.textContent=location.origin+'/v1';if(googleClientId&&!me.gmail)renderGoogleButton(googleBind,'bind');else googleBind.innerHTML=me.gmail?'':'尚未設定 GOOGLE_CLIENT_ID，無法綁定 Gmail。';await Promise.all([loadKeys(),loadUsage()])}catch(e){authError.textContent=e.message}}
+async function loadKeys(){const rows=await api('/api/customer/keys');keys.innerHTML=rows.length?`<div class="table"><table><thead><tr><th>名稱</th><th>Key 前綴</th><th>狀態</th><th>RPM</th><th>TPM</th><th>最後使用</th><th>操作</th></tr></thead><tbody>${rows.map(k=>`<tr><td>${k.name}</td><td><code>${k.prefix}...</code></td><td>${k.active?'啟用':'停用'}</td><td>${k.rpm_limit}</td><td>${k.tpm_limit}</td><td>${k.last_used_at?new Date(k.last_used_at).toLocaleString():'尚未使用'}</td><td><button class="secondary" onclick="toggleKey(${k.id})">${k.active?'停用':'啟用'}</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">尚未建立 API Key</div>'}
+async function toggleKey(id){await api(`/api/customer/keys/${id}/toggle`,{method:'PATCH'});loadKeys()}
+createKey.onclick=async()=>{const name=prompt('Key 名稱','Default');if(!name)return;try{const d=await api('/api/customer/keys',{method:'POST',body:JSON.stringify({name})});newKey.innerHTML=`<div class="key-reveal"><b>請立即複製，這組 Key 只顯示一次</b><code>${d.api_key}</code><button class="secondary" onclick="navigator.clipboard.writeText('${d.api_key}')">複製</button></div>`;loadKeys()}catch(e){alert(e.message)}};
+async function loadUsage(){const rows=await api('/api/customer/usage');usage.innerHTML=rows.length?`<div class="table"><table><thead><tr><th>時間</th><th>模型</th><th>端點</th><th>Input</th><th>Output</th><th>費用</th><th>狀態</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${new Date(x.created_at).toLocaleString()}</td><td>${x.model}</td><td>${x.endpoint}</td><td>${x.input_tokens}</td><td>${x.output_tokens}</td><td>${money(x.charge)}</td><td>${x.status}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">尚無 API 使用紀錄</div>'}
+refresh.onclick=showConsole;initGoogle().then(()=>{if(token)showConsole()});
+</script>
+</body>
+</html>
