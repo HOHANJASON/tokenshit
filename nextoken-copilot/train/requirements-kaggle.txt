@@ -1,0 +1,7 @@
+# Pinned for a reproducible QLoRA run on Kaggle (CUDA, T4).
+transformers==4.46.3
+trl==0.11.4
+peft==0.13.2
+bitsandbytes==0.44.1
+accelerate==1.1.1
+datasets==3.1.0

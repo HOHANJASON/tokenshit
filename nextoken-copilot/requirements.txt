@@ -1,0 +1,20 @@
+# Core agent stack
+langgraph>=0.2.50
+langchain-core>=0.3.20
+langchain-mcp-adapters>=0.1.0
+mcp>=1.2.0
+
+# Data + API
+SQLAlchemy>=2.0.30
+fastapi>=0.115
+uvicorn>=0.30
+httpx>=0.27
+PyJWT>=2.8
+
+# Tests
+pytest>=8.0
+
+# --- Optional real-model backends (install when leaving sandbox mode) -------
+# langchain-openai>=0.2     # NexToken gateway (OpenAI-compatible) or OpenAI
+# langchain-anthropic>=0.3  # Anthropic
+# langchain-aws>=0.2        # Amazon Bedrock
