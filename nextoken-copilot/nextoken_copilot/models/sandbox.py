@@ -46,6 +46,7 @@ FRAGMENT_HINTS: dict[str, list[str]] = {
     "list_customers": ["customers", "all customers", "list customers", "find", "search", "lookup"],
     "search_docs": ["how do", "how to", "integrate", "docs", "documentation", "authenticate",
                     "401", "402", "429", "error", "sdk", "endpoint", "streaming", "guide"],
+    "usage_plan": ["plan", "budget", "forecast", "project", "optimize", "recommend", "suggest"],
 }
 
 # Worker name -> phrases that route a sub-task to it.
@@ -60,6 +61,8 @@ WORKER_HINTS: dict[str, list[str]] = {
                 "dashboard", "financial", "overview", "summary", "cost"],
     "help": ["how do", "how to", "integrate", "docs", "documentation", "authenticate",
              "401", "402", "429", "error", "sdk", "endpoint", "streaming", "guide"],
+    "planner": ["plan", "budget", "forecast", "projection", "optimize", "recommend",
+                "suggest", "which model", "fits"],
 }
 
 

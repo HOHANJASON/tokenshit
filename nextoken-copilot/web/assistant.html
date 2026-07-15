@@ -247,6 +247,7 @@ function scroll(){ thread.scrollTop = thread.scrollHeight; }
 function renderChips(){
   chips.innerHTML="";
   EX.forEach(t=>{ const c=el("button","ex",esc(t)); c.onclick=()=>{qEl.value=t; send();}; chips.appendChild(c); });
+  const p=el("button","ex","Suggest a usage plan for a $20/month budget"); p.onclick=()=>{qEl.value="Suggest an API usage plan for a $20 monthly budget"; send();}; chips.appendChild(p);
   const c=el("button","ex attack","Try an attack ↯"); c.onclick=()=>{qEl.value=ATTACK; send();}; chips.appendChild(c);
 }
 

@@ -32,6 +32,8 @@ FUNCTIONAL: list[tuple[Case, list[str]]] = [
     (Case(Role.ADMIN, None, "show the margin by model"), ["margin_pct"]),
     (Case(Role.ADMIN, None, "how healthy are our providers"), ["error_rate_pct"]),
     (Case(Role.SUPPORT, None, "show the usage summary for customer 2"), ['"customer_id": 2', "total_spend"]),
+    (Case(Role.CLIENT, 1, "suggest an api usage plan for a $50 monthly budget"),
+     ["projected_spend_usd", "recommendations"]),
 ]
 
 # CLIENT attempts to reach admin/cross-customer data.

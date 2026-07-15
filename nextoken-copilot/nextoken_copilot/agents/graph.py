@@ -56,6 +56,7 @@ WORKER_TOOLS: dict[str, list[str]] = {
         "get_provider_health", "get_platform_summary",
     ],
     "help": ["search_docs"],  # product docs (knowledge.py) — role-agnostic
+    "planner": ["build_usage_plan"],  # grounded usage planning (planner.py) — client only
 }
 
 # One-line routing hints shown to the supervisor (small routers need them).
@@ -66,6 +67,8 @@ _WORKER_HINTS: dict[str, str] = {
     "finance": "platform revenue, margins, provider costs (staff only)",
     "help": "how-to and docs questions: integrating the API, authentication, "
             "error codes like 429, streaming, tool calling",
+    "planner": "suggest a usage plan, budget planning, cost forecast or projection, "
+               "optimize spending, which model fits a workload",
 }
 
 
@@ -89,6 +92,12 @@ def _flatten(content) -> str:
 
 def _clean_plan_line(line: str) -> str:
     return re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+
+
+def _parse_budget(text: str) -> float | None:
+    """Pull a stated dollar budget out of the question, if any."""
+    m = re.search(r"\$\s*(\d+(?:\.\d+)?)", text)
+    return float(m.group(1)) if m else None
 
 
 # Small local models tend to ask the user for ids instead of calling tools;
@@ -187,8 +196,11 @@ async def answer(principal: Principal, question: str, token: str | None = None,
         tools = await load_tools(principal)
     # Public product docs ride along in every mode (no JWT, can't leak data).
     from ..knowledge import load_help_tools
+    # Grounded usage planning (client only): numbers computed in code from the
+    # caller's own data, in both tools modes; the model just narrates.
+    from ..planner import load_planner_tools
 
-    tools = [*tools, *load_help_tools()]
+    tools = [*tools, *load_help_tools(), *load_planner_tools(principal, token=token)]
     worker_agents = _build_workers(principal, router_model, tools)
     worker_names = list(worker_agents)
 
@@ -206,7 +218,9 @@ async def answer(principal: Principal, question: str, token: str | None = None,
                                   "How much did I spend this month?\n"
                                   "Which models did I spend it on?\n"
                                   "Example: 'What API keys do I have?' ->\n"
-                                  "What API keys do I have?" + ctx),
+                                  "What API keys do I have?\n"
+                                  "Example: 'Suggest an API usage plan for a $20 monthly budget' ->\n"
+                                  "Suggest an API usage plan for a $20 monthly budget" + ctx),
             HumanMessage(content=f"PLAN:: question={state['question']}"),
         ]
         resp = router_model.invoke(prompt)
@@ -229,6 +243,17 @@ async def answer(principal: Principal, question: str, token: str | None = None,
 
     async def worker(state: State) -> dict:
         subtask = state["plan"][state["step"]]
+        # The planner worker is fully deterministic: its one tool computes every
+        # number in code, so there is no reasoning step for a model to flub —
+        # call it directly and let the aggregator do the narration.
+        if state["route"] == "planner":
+            tool = next(t for t in tools if t.name == "build_usage_plan")
+            budget = _parse_budget(f"{state['question']} {subtask}")
+            payload = await tool.coroutine(monthly_budget=budget)
+            result = {"step": state["step"], "worker": "planner", "subtask": subtask,
+                      "output": payload, "tools": ["build_usage_plan"],
+                      "evidence": [payload[:600]]}
+            return {"results": state["results"] + [result], "step": state["step"] + 1}
         agent = worker_agents[state["route"]]
         # Small models answer from memory unless the task itself demands a tool.
         nudge = f"{subtask}\nUse your tools to get the real data — do not answer from memory."
