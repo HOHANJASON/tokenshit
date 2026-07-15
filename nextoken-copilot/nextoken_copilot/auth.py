@@ -32,11 +32,25 @@ def create_token(role: Role, customer_id: int | None = None, email: str = "", ho
     return jwt.encode(payload, APP_SECRET, algorithm="HS256")
 
 
+# The seam: NexToken's backend issues role="customer"/"staff"/"admin" with the
+# customer id in `sub`; the copilot's roles are client/support/admin with the id
+# in `cid`. Map them so a real NexToken session JWT validates here unchanged
+# (Option A in integration/INTEGRATION.md — copilot shares the backend APP_SECRET).
+_ROLE_MAP = {"customer": "client", "staff": "support", "support": "support",
+             "admin": "admin", "client": "client"}
+
+
 def _principal_from_payload(payload: dict) -> Principal:
+    raw_role = str(payload.get("role", "")).lower()
+    role = _ROLE_MAP.get(raw_role, raw_role)
+    # customer id: prefer `cid`; fall back to `sub` when it's the numeric customer id.
     cid = payload.get("cid")
+    if cid is None and role == "client":
+        sub = payload.get("sub")
+        cid = sub if (isinstance(sub, int) or str(sub).isdigit()) else None
     try:
         return Principal(
-            role=Role(payload["role"]),
+            role=Role(role),
             customer_id=int(cid) if cid is not None else None,
             email=payload.get("email", ""),
         )

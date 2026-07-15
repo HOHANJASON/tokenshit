@@ -34,6 +34,9 @@ class Settings:
     llm_base_url: str = os.getenv("COPILOT_LLM_BASE_URL", "http://127.0.0.1:3100/v1")
     llm_api_key: str = os.getenv("COPILOT_LLM_API_KEY", "")
     llm_temperature: float = float(os.getenv("COPILOT_LLM_TEMPERATURE", "0"))
+    # Multimodal: a vision-capable gateway model reads attached images and turns
+    # them into text for the (unchanged) multi-agent pipeline. Empty => disabled.
+    vision_model: str = os.getenv("COPILOT_VISION_MODEL", "")
 
     # --- tool source -------------------------------------------------------
     # local  = reference data layer via our MCP server (offline dev)

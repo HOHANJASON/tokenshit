@@ -47,6 +47,8 @@ def _context(conversation_id: str | None) -> str:
 class ChatBody(BaseModel):
     question: str
     conversation_id: str | None = None
+    images: list[str] | None = None  # data URLs or URLs; read by the vision front door
+    language: str | None = None      # locale hint for the answer, e.g. "zh-Hant", "ar", "hi"
 
 
 @app.get("/health")
@@ -70,7 +72,8 @@ async def chat(
     # backend, which re-enforces RBAC and audits every tool call server-side.
     token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else None
     context = _context(body.conversation_id)
-    result = await answer(principal, body.question, token=token, context=context)
+    result = await answer(principal, body.question, token=token, context=context,
+                          images=body.images, language=body.language)
     if body.conversation_id:
         _MEMORY.setdefault(body.conversation_id, []).append({"q": body.question, "a": result["answer"]})
     return {"role": principal.role.value, "question": body.question, **result}

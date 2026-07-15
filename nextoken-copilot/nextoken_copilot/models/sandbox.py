@@ -44,6 +44,8 @@ FRAGMENT_HINTS: dict[str, list[str]] = {
     # Remote (NexToken backend) tool names — kept last so local names match first.
     "get_usage": ["usage", "spend", "spent", "calls", "recent", "last", "logs", "consumption", "tokens"],
     "list_customers": ["customers", "all customers", "list customers", "find", "search", "lookup"],
+    "search_docs": ["how do", "how to", "integrate", "docs", "documentation", "authenticate",
+                    "401", "402", "429", "error", "sdk", "endpoint", "streaming", "guide"],
 }
 
 # Worker name -> phrases that route a sub-task to it.
@@ -56,6 +58,8 @@ WORKER_HINTS: dict[str, list[str]] = {
     "catalog": ["catalog", "pricing", "price list", "price", "available"],
     "finance": ["revenue", "margin", "profit", "upstream", "provider", "economics", "kpi",
                 "dashboard", "financial", "overview", "summary", "cost"],
+    "help": ["how do", "how to", "integrate", "docs", "documentation", "authenticate",
+             "401", "402", "429", "error", "sdk", "endpoint", "streaming", "guide"],
 }
 
 
@@ -164,7 +168,10 @@ class SandboxChatModel(BaseChatModel):
                 return _ai(f"{label}: {_content_text(last.content)}")
             query = _last_user(messages)
             spec = self._pick_tool(query)
-            args = _extract_args(query, set(spec["args"]))
+            if spec["name"] == "search_docs":  # docs search wants the whole question
+                args = {"query": query}
+            else:
+                args = _extract_args(query, set(spec["args"]))
             call = {"name": spec["name"], "args": args, "id": "call_" + uuid.uuid4().hex[:8], "type": "tool_call"}
             return _ai("", tool_calls=[call])
 
@@ -189,8 +196,9 @@ class SandboxChatModel(BaseChatModel):
             return _ai("\n".join(parts) if parts else question)
 
         # (4) aggregator
-        if "SUMMARIZE::" in user:
-            payload = user.split("SUMMARIZE::", 1)[1].strip()
+        if "SUMMARIZE::" in user or "FINDINGS::" in user:
+            marker = "SUMMARIZE::" if "SUMMARIZE::" in user else "FINDINGS::"
+            payload = user.split(marker, 1)[1].strip()
             try:
                 results = json.loads(payload)
                 lines = [f"- {r.get('output', '')}" for r in results]
