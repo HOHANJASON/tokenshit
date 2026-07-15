@@ -10,6 +10,13 @@ Built to run **fully offline** on a deterministic *sandbox* model (no API key),
 then switch to a real model (the NexToken gateway, OpenAI, Anthropic, Bedrock)
 with a single env var.
 
+Beyond Q&A over account data it ships a **`help` worker** (customer-support RAG
+over the public docs — deterministic keyword search, no embeddings), a
+**vision front door** (attach a screenshot; a vision model behind the gateway
+describes it and the text-only agent core answers), **localized answers** in 8
+languages, and a hardened **output guard** (RBAC leak scan, link allowlist
+against phishing relay, Unicode/homoglyph evasion defenses).
+
 ```
                           ┌──────────────────────────────────────────────┐
    POST /assistant/chat   │                ORCHESTRATOR                  │
@@ -21,10 +28,10 @@ with a single env var.
                           │   routes each sub-task to one worker (by role)│
                           └───────┬───────────┬───────────┬──────────────┘
                                   ▼           ▼           ▼
-                            ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
-                            │ usage   │ │ billing │ │ catalog │ │ finance │  ◄─ ReAct agents
-                            └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘     (role-scoped)
-                                 └───────────┴─────┬─────┴───────────┘
+                       ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
+                       │ usage   │ │ billing │ │ catalog │ │ finance │ │ help    │ ◄─ ReAct agents
+                       └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘    (role-scoped)
+                            └───────────┴─────┬─────┴───────────┴──────────┘
                                                    ▼
                                      ┌───────────────────────────┐
                                      │   MCP server (stdio)       │  ◄─ secure boundary
@@ -108,6 +115,34 @@ export COPILOT_LLM_API_KEY=nxt_live_xxx
 export COPILOT_LLM_MODEL=nxt-gpt-4o
 ```
 
+## Runs live on a $0 local stack (Ollama)
+
+The whole demo — backend gateway, agents, tool calls, billing, audit — runs
+end-to-end on one laptop with **no paid API key**: Ollama serves
+`qwen2.5:3b` (tool-calling capable, ~1.9 GB) as the upstream provider behind
+NexToken's own gateway, so the copilot dogfoods the product it assists with.
+
+```bash
+# 1. local model
+ollama pull qwen2.5:3b && ollama serve
+
+# 2. register it as a NexToken provider + model + route (backend repo)
+PROVIDER_API_KEY=ollama PROVIDER_BASE_URL=http://127.0.0.1:11434/v1 \
+  UPSTREAM_MODEL=qwen2.5:3b PUBLIC_MODEL=nxt-local bash setup_gateway.sh
+
+# 3. point the copilot at the gateway (see the env block above)
+export COPILOT_LLM_MODEL=nxt-local
+```
+
+Verified live: single-step answers in ~3–7 s warm; multi-step (plan → route →
+tool-call → aggregate) ~9–40 s. The orchestrator/supervisor/worker prompts in
+`agents/graph.py` are hardened for small models (exactly-one-sub-task planning,
+routing hints, "call your tools, don't ask the user"), so a 3B model routes and
+tool-calls reliably; a stronger answer-tier model (`COPILOT_ANSWER_MODEL`) is a
+drop-in upgrade for answer polish. On 8 GB machines run Ollama with
+`OLLAMA_MAX_LOADED_MODELS=1 OLLAMA_KEEP_ALIVE=30s` if you also enable the
+vision front door (`COPILOT_VISION_MODEL`).
+
 ## Remote mode: the live NexToken backend
 
 The backend now ships its own secure assistant surface (`GET /api/assistant/tools`,
@@ -127,8 +162,9 @@ Or set `COPILOT_TOOLS_MODE=remote` for the API server
 
 - **Offline suite** (`make eval`) — runs now on the sandbox model:
   functional success + an RBAC **red-team** (a client trying to extract admin
-  financials / other customers' data). Current: **functional 7/7, red-team
-  6/6 — zero leaks.**
+  financials / other customers' data, plus image-borne prompt injection through
+  the vision front door). Current: **functional 7/7, red-team 8/8 — zero
+  leaks** (41 pytest green).
 - **Public benchmark — τ-bench** (`eval/tau_bench/`) — the same tool-calling
   core evaluated on Sierra's [τ-bench](https://github.com/sierra-research/tau-bench)
   retail/airline tasks. Needs a real model + key; see
@@ -151,10 +187,18 @@ nextoken_copilot/
   agents/
     mcp_loader.py    spawn MCP server, load tools for a principal
     graph.py         orchestrator → supervisor → workers → aggregator
+  knowledge.py       help worker: keyword RAG over docs/ (offline, no embeddings)
+  docs/              public product docs served by the help worker
+  vision.py          image → text via a vision model through the gateway
+  guard.py           output guard: RBAC leak scan + link allowlist + Unicode hardening
   auth.py            JWT (NexToken-compatible) → Principal
   api.py             POST /assistant/chat
-eval/                offline suite + τ-bench adapter
-tests/               pytest (RBAC, tools, MCP surface, graph, API)
+eval/                offline suite (incl. red-team) + τ-bench adapter
+tests/               pytest (RBAC, tools, MCP surface, graph, API, guard, help, i18n)
+web/                 customer-widget demo panel (floating launcher + chat popover)
+integration/         drop-in widget + integration guide for the real console
+scripts/             CLI ask + FT trace collection/dataset build
+train/               QLoRA router fine-tune (Kaggle 2×T4)
 ```
 
 ## How this maps to the NexToken team

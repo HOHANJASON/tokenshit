@@ -34,6 +34,13 @@ BATTERY: list[tuple[str, int | None, str]] = [
     ("client", 1, "how much did I spend on nxt-o3"),
     ("client", 1, "what is my usage summary and am I near my rate limit"),
     ("client", 1, "give me the price list"),
+    # ---- client help/docs (help worker) ----
+    ("client", 1, "how do I authenticate my api requests"),
+    ("client", 1, "why am I getting 429 errors"),
+    ("client", 1, "how do I stream responses from the api"),
+    ("client", 1, "how does tool calling work"),
+    ("client", 1, "how do I get started with the api"),
+    ("client", 1, "why am I getting 429 errors and how many requests did I make today"),
     # ---- support ----
     ("support", None, "show the usage summary for customer 2"),
     ("support", None, "what is customer 3's balance"),
