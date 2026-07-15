@@ -72,6 +72,10 @@
   .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;border:.5px solid var(--border);border-radius:999px;padding:2px 8px;margin:2px 4px 2px 0;color:var(--muted)}
   .chip.w{background:var(--accent-weak);color:var(--accent-text);border-color:transparent}
   .metrics{margin-top:8px;font-size:11px;color:var(--muted)}
+  .fb{margin-top:8px;display:flex;gap:6px;align-items:center}
+  .fb button{font-size:13px;background:var(--bg);border:.5px solid var(--border);border-radius:999px;padding:3px 10px;cursor:pointer;color:var(--muted)}
+  .fb button:hover{color:var(--text);border-color:var(--text)}
+  .fb .done{font-size:11px;color:var(--muted)}
   .guard{display:inline-block;margin-top:8px;font-size:11px;background:var(--amber-bg);color:var(--amber-text);border-radius:6px;padding:3px 8px}
   .subtask{font-size:12px;color:var(--muted);margin-bottom:4px}
   .chips-row{padding:0 14px 8px;display:flex;flex-wrap:wrap;gap:6px}
@@ -218,7 +222,24 @@ function addAssistant(d){
     b.appendChild(el("div","metrics",`workers: ${(d.workers_available||[]).join(", ")} · tools: ${mtr.tools_mode} · model: ${mtr.llm_mode}${mtr.vision_used ? " · 👁 vision" : ""}`));
     if(mtr.llm_mode) document.getElementById("mode").textContent = mtr.llm_mode;
   }
+  if(d.answer_id) b.appendChild(feedbackRow(d.answer_id));
   m.appendChild(b); thread.appendChild(m); scroll();
+}
+
+function feedbackRow(answerId){
+  const row=el("div","fb");
+  const vote=async v=>{
+    try{
+      await fetch("/assistant/feedback",{method:"POST",
+        headers:{"content-type":"application/json","X-Role":"client","X-Customer-Id":"1"},
+        body:JSON.stringify({answer_id:answerId,verdict:v})});
+      row.innerHTML='<span class="done">Thanks — feedback recorded ✓</span>';
+    }catch(e){ row.innerHTML='<span class="done">Could not record feedback</span>'; }
+  };
+  const up=el("button",null,"👍"); up.title="Good answer"; up.onclick=()=>vote("up");
+  const dn=el("button",null,"👎"); dn.title="Something was off"; dn.onclick=()=>vote("down");
+  row.appendChild(up); row.appendChild(dn);
+  return row;
 }
 
 function scroll(){ thread.scrollTop = thread.scrollHeight; }

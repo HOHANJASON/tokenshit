@@ -9,16 +9,21 @@ console (restrict COPILOT_CORS_ORIGINS in production).
 """
 from __future__ import annotations
 
+import json
 import os
+import time
+import uuid
 from pathlib import Path
+from typing import Literal
 
-from fastapi import Depends, FastAPI, Header
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .agents.graph import answer
 from .auth import DEV_AUTH, create_token, principal_from_request
+from .guard import sanitize_input
 from .principal import Principal, Role
 
 app = FastAPI(title="NexToken Copilot", version="0.1.0")
@@ -37,6 +42,20 @@ _PANEL = Path(__file__).resolve().parent.parent / "web" / "assistant.html"
 # the backend's customer_chat_conversations tables; this keeps the demo simple.
 _MEMORY: dict[str, list[dict]] = {}
 _MAX_TURNS = 6
+
+# Feedback loop: every answer is logged with its trace under an answer_id, and
+# POST /assistant/feedback records a 👍/👎 vote against it. Both are JSONL,
+# joined offline by answer_id — thumbs-down traces become eval cases, the rest
+# is FT signal (see train/README.md). In production these belong in the
+# backend under the same RBAC as everything else.
+_FEEDBACK_DIR = Path(os.getenv("COPILOT_FEEDBACK_DIR",
+                               str(Path(__file__).resolve().parent.parent / "data")))
+
+
+def _append_jsonl(name: str, record: dict) -> None:
+    _FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+    with open(_FEEDBACK_DIR / name, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def _context(conversation_id: str | None) -> str:
@@ -76,7 +95,43 @@ async def chat(
                           images=body.images, language=body.language)
     if body.conversation_id:
         _MEMORY.setdefault(body.conversation_id, []).append({"q": body.question, "a": result["answer"]})
-    return {"role": principal.role.value, "question": body.question, **result}
+    answer_id = uuid.uuid4().hex[:12]
+    _append_jsonl("feedback_traces.jsonl", {
+        "answer_id": answer_id,
+        "ts": int(time.time()),
+        "role": principal.role.value,
+        "customer_id": principal.customer_id,
+        "question": body.question,
+        "answer": result["answer"],
+        "plan": result.get("plan", []),
+        "workers": (result.get("metrics") or {}).get("workers", []),
+        "tools": (result.get("metrics") or {}).get("tools_called", []),
+        "metrics": result.get("metrics", {}),
+    })
+    return {"role": principal.role.value, "question": body.question,
+            "answer_id": answer_id, **result}
+
+
+class FeedbackBody(BaseModel):
+    answer_id: str = Field(min_length=1, max_length=32)
+    verdict: Literal["up", "down"]
+    comment: str | None = Field(default=None, max_length=500)
+
+
+@app.post("/assistant/feedback")
+def feedback(body: FeedbackBody,
+             principal: Principal = Depends(principal_from_request)) -> dict:
+    if not body.answer_id.isalnum():
+        raise HTTPException(status_code=422, detail="bad answer_id")
+    _append_jsonl("feedback_votes.jsonl", {
+        "answer_id": body.answer_id,
+        "ts": int(time.time()),
+        "role": principal.role.value,
+        "customer_id": principal.customer_id,
+        "verdict": body.verdict,
+        "comment": sanitize_input(body.comment) if body.comment else None,
+    })
+    return {"ok": True}
 
 
 if DEV_AUTH:
