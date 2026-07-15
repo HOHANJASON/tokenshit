@@ -13,11 +13,17 @@ frontier model. The strong model is kept only for the final answer via
 | `qlora_router.py` | 4-bit QLoRA trainer (TRL + PEFT) |
 | `requirements-kaggle.txt` | pinned deps for a reproducible T4 run |
 
-## 0. (Recommended) regenerate with teacher labels
+## 0. Dataset provenance (and upgrading it)
 
-The committed `ft_router.jsonl` was bootstrapped from the deterministic sandbox
-router, so training it teaches a small model to imitate the rules. For a real
-quality gain, relabel with a strong teacher model, then re-upload:
+The committed `ft_router.jsonl` (**212 pairs**, 2026-07-15) mixes two sources:
+126 sandbox-labeled pairs from the 37-question battery, plus 86 route pairs
+whose *phrasings* came from live qwen2.5:3b gateway traces but whose *labels*
+came from the deterministic sandbox router (`build_ft_dataset.py --augment` —
+the student's own routes are too flaky to be labels). A ready-to-import
+notebook is at `kaggle_router_qlora.ipynb`; upload the three files below as a
+Kaggle dataset named `nextoken-router-ft`.
+
+For a further quality gain, relabel with a strong teacher model, then re-upload:
 
 ```bash
 # in the copilot repo, with your key set
