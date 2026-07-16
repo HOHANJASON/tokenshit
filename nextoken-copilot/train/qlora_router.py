@@ -70,10 +70,12 @@ def main() -> None:
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
     )
 
-    cfg = SFTConfig(
+    # TRL renamed kwargs across versions (0.11 -> 0.2x); pick what this one has.
+    import inspect
+
+    cfg_kwargs = dict(
         output_dir=args.out,
         dataset_text_field="text",
-        max_seq_length=args.max_seq,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch,
         gradient_accumulation_steps=2,
@@ -87,14 +89,15 @@ def main() -> None:
         packing=False,
         report_to="none",
     )
+    cfg_params = inspect.signature(SFTConfig.__init__).parameters
+    cfg_kwargs["max_seq_length" if "max_seq_length" in cfg_params else "max_length"] = args.max_seq
+    cfg = SFTConfig(**{k: v for k, v in cfg_kwargs.items() if k in cfg_params})
 
-    trainer = SFTTrainer(
-        model=model,
-        args=cfg,
-        train_dataset=ds,
-        peft_config=lora,
-        tokenizer=tokenizer,
-    )
+    trainer_kwargs = dict(model=model, args=cfg, train_dataset=ds, peft_config=lora)
+    tok_key = ("tokenizer" if "tokenizer" in inspect.signature(SFTTrainer.__init__).parameters
+               else "processing_class")
+    trainer_kwargs[tok_key] = tokenizer
+    trainer = SFTTrainer(**trainer_kwargs)
     trainer.train()
     trainer.save_model(args.out)
     tokenizer.save_pretrained(args.out)

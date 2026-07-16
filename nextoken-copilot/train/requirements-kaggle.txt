@@ -1,7 +1,9 @@
-# Pinned for a reproducible QLoRA run on Kaggle (CUDA, T4).
-transformers==4.46.3
-trl==0.11.4
-peft==0.13.2
-bitsandbytes==0.44.1
-accelerate==1.1.1
-datasets==3.1.0
+# Kaggle's image ships current torch/CUDA — don't pin exact versions against
+# it (2024-era pins crash peft at import on the 2026 image). Floors only;
+# qlora_router.py adapts to TRL API renames across versions.
+transformers>=4.48
+trl>=0.13
+peft>=0.14
+bitsandbytes>=0.45
+accelerate>=1.2
+datasets>=3.1
