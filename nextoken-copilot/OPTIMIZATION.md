@@ -42,6 +42,37 @@ and runs ~10–50× cheaper/faster than a frontier model.
 one; routing becomes offline-capable; the sandbox heuristics become a learned
 model with the same interface.
 
+### Run log — v1 (2026-07-16, Kaggle 2×T4, Qwen2.5-1.5B NF4)
+
+Trained on the 212-pair dataset (126 sandbox-labeled + 86 relabeled live-student
+phrasings), **full-text loss, 3 epochs**. Merged → GGUF q8_0 → Ollama
+(`nxt-router-ft`) → gateway model `nxt-router` (wired by
+`train/wire_router.sh`). Probed the two distilled tasks separately:
+
+| Task | Result |
+|---|---|
+| **plan** | learned cleanly — compound questions → exact sub-tasks, one-thing questions stay whole (the live 3B's over-splitting is gone in the adapter) |
+| **route** | collapsed — answers `billing` for every input, despite `usage` being the majority label (58 vs 31 of 138) |
+
+**Diagnosis:** full-text loss. Plan answers are 10–20 supervised tokens; route
+answers are **one token** at the end of a ~60-token prompt, so across ~40
+optimizer steps the route mapping got almost no gradient. Not class imbalance —
+a loss-masking problem.
+
+**v2 recipe (committed, not yet run):** completion-only loss (prompt labels
+`-100`, `DataCollatorForSeq2Seq`), 8 epochs. Expect in-sample route accuracy
+>90% (the notebook's accuracy cell gates the 1.5 GB download). Until v2 is
+trained, `COPILOT_ROUTER_MODEL` stays **unset** — the v1 adapter would degrade
+routing. The dormant `nxt-router` gateway registration is harmless.
+
+**Toolchain notes (hard-won):** Kaggle 2026 image needs version *floors* not
+2024 pins (peft import-crashes); TRL dropped entirely — its chunked-CE forward
+patch breaks on accelerate's `functools.partial` wrapping of quantized
+`device_map` models, and plain `transformers.Trainer` + `peft` does everything
+this job needs; uninstall the image's stale `torchao` before
+`PeftModel.from_pretrained`; GGUF export via `convert_hf_to_gguf.py --outtype
+q8_0` (no llama-quantize build needed).
+
 ---
 
 ## 2. Inference optimization
