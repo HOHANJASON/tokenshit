@@ -4,7 +4,13 @@ Distils the three router decisions (plan / route / tool-select) into a small
 model. Reads the chat-format dataset produced by
 ``scripts/build_ft_dataset.py`` and trains 4-bit LoRA adapters.
 
-Run on Kaggle (GPU T4 x2) or any CUDA GPU >= 12 GB:
+Plain ``transformers.Trainer`` + ``peft`` on purpose — no TRL. TRL's SFT
+wrapper broke twice on the current Kaggle image (2024-pin import crash, then
+its chunked-CE forward patch vs accelerate's ``functools.partial`` wrapping
+on quantized ``device_map`` models); for full-text SFT on a small dataset it
+buys nothing over the stable core APIs.
+
+Run on Kaggle (GPU T4) or any CUDA GPU >= 12 GB:
 
     pip install -r requirements-kaggle.txt
     python qlora_router.py --data ft_router.jsonl --base Qwen/Qwen2.5-1.5B-Instruct
@@ -17,9 +23,15 @@ import argparse
 
 import torch
 from datasets import load_dataset
-from peft import LoraConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from trl import SFTConfig, SFTTrainer
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    DataCollatorForLanguageModeling,
+    Trainer,
+    TrainingArguments,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,15 +53,17 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Render each {"messages":[...]} example with the model's chat template.
+    # Render each {"messages":[...]} example with the model's chat template,
+    # then tokenize (full-text loss — simple and fine at this dataset size).
     ds = load_dataset("json", data_files=args.data, split="train")
+    ds = ds.map(lambda ex: {"text": tokenizer.apply_chat_template(ex["messages"], tokenize=False)},
+                remove_columns=ds.column_names)
+    ds = ds.map(lambda ex: tokenizer(ex["text"], truncation=True, max_length=args.max_seq),
+                remove_columns=["text"])
 
-    def to_text(example):
-        return {"text": tokenizer.apply_chat_template(example["messages"], tokenize=False)}
-
-    ds = ds.map(to_text, remove_columns=ds.column_names)
-
-    # 4-bit NF4 quantization; float16 compute (T4 has no bf16).
+    # 4-bit NF4 quantization; float16 compute (T4 has no bf16). Single device:
+    # a 1.5B fits a T4 several times over, and single-GPU load avoids
+    # accelerate's dispatch wrappers entirely.
     bnb = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -57,25 +71,22 @@ def main() -> None:
         bnb_4bit_use_double_quant=True,
     )
     model = AutoModelForCausalLM.from_pretrained(
-        args.base, quantization_config=bnb, device_map="auto", torch_dtype=torch.float16
+        args.base, quantization_config=bnb, device_map={"": 0}
     )
     model.config.use_cache = False
-
-    lora = LoraConfig(
+    model = prepare_model_for_kbit_training(model)
+    model = get_peft_model(model, LoraConfig(
         r=16,
         lora_alpha=32,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    )
+    ))
+    model.print_trainable_parameters()
 
-    # TRL renamed kwargs across versions (0.11 -> 0.2x); pick what this one has.
-    import inspect
-
-    cfg_kwargs = dict(
+    train_args = TrainingArguments(
         output_dir=args.out,
-        dataset_text_field="text",
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch,
         gradient_accumulation_steps=2,
@@ -83,32 +94,27 @@ def main() -> None:
         lr_scheduler_type="cosine",
         warmup_ratio=0.03,
         logging_steps=5,
-        save_strategy="epoch",
+        save_strategy="no",
         fp16=True,
-        bf16=False,
-        packing=False,
         report_to="none",
     )
-    cfg_params = inspect.signature(SFTConfig.__init__).parameters
-    cfg_kwargs["max_seq_length" if "max_seq_length" in cfg_params else "max_length"] = args.max_seq
-    cfg = SFTConfig(**{k: v for k, v in cfg_kwargs.items() if k in cfg_params})
-
-    trainer_kwargs = dict(model=model, args=cfg, train_dataset=ds, peft_config=lora)
-    tok_key = ("tokenizer" if "tokenizer" in inspect.signature(SFTTrainer.__init__).parameters
-               else "processing_class")
-    trainer_kwargs[tok_key] = tokenizer
-    trainer = SFTTrainer(**trainer_kwargs)
+    trainer = Trainer(
+        model=model,
+        args=train_args,
+        train_dataset=ds,
+        data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
+    )
     trainer.train()
-    trainer.save_model(args.out)
+    model.save_pretrained(args.out)
     tokenizer.save_pretrained(args.out)
     print(f"\nSaved LoRA adapter -> {args.out}")
 
-    # Sanity generation on the three router tasks.
+    # Sanity generation on the router tasks.
     checks = [
         ("You are an orchestrator. Break the user's question into 1-3 short, independent sub-tasks, one per line.",
          "what is my balance and list my api keys"),
         ("You are a supervisor. Choose exactly one worker for the sub-task. Reply with only the worker name.",
-         "options=usage,billing,catalog,finance :: task=what is our gross margin by model"),
+         "options=usage,billing,catalog,finance,help :: task=what is our gross margin by model"),
     ]
     model.config.use_cache = True
     for system, user in checks:

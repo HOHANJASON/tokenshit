@@ -1,8 +1,8 @@
 # Kaggle's image ships current torch/CUDA — don't pin exact versions against
-# it (2024-era pins crash peft at import on the 2026 image). Floors only;
-# qlora_router.py adapts to TRL API renames across versions.
+# it (2024-era pins crash peft at import on the 2026 image). Floors only.
+# No TRL: qlora_router.py uses plain transformers.Trainer + peft (TRL's SFT
+# wrapper broke twice on the current image; the core APIs are stable).
 transformers>=4.48
-trl>=0.13
 peft>=0.14
 bitsandbytes>=0.45
 accelerate>=1.2
