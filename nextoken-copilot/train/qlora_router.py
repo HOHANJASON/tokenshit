@@ -28,7 +28,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
-    DataCollatorForLanguageModeling,
+    DataCollatorForSeq2Seq,
     Trainer,
     TrainingArguments,
 )
@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--data", default="ft_router.jsonl")
     p.add_argument("--base", default="Qwen/Qwen2.5-1.5B-Instruct")
     p.add_argument("--out", default="router-lora")
-    p.add_argument("--epochs", type=float, default=3.0)
+    p.add_argument("--epochs", type=float, default=8.0)
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--batch", type=int, default=8)
     p.add_argument("--max-seq", type=int, default=1024)
@@ -53,13 +53,19 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Render each {"messages":[...]} example with the model's chat template,
-    # then tokenize (full-text loss — simple and fine at this dataset size).
+    # Completion-only loss: mask the prompt, train ONLY on the assistant's
+    # tokens. Full-text loss buried the 1-token route answers under the long
+    # prompts (v1 adapter planned perfectly but routed everything to one
+    # worker); masking concentrates every gradient on the answer.
+    def encode(ex):
+        msgs = ex["messages"]
+        prompt_ids = tokenizer.apply_chat_template(msgs[:-1], add_generation_prompt=True)
+        full_ids = tokenizer.apply_chat_template(msgs)[: args.max_seq]
+        labels = [-100] * len(prompt_ids) + full_ids[len(prompt_ids):]
+        return {"input_ids": full_ids, "labels": labels}
+
     ds = load_dataset("json", data_files=args.data, split="train")
-    ds = ds.map(lambda ex: {"text": tokenizer.apply_chat_template(ex["messages"], tokenize=False)},
-                remove_columns=ds.column_names)
-    ds = ds.map(lambda ex: tokenizer(ex["text"], truncation=True, max_length=args.max_seq),
-                remove_columns=["text"])
+    ds = ds.map(encode, remove_columns=ds.column_names)
 
     # 4-bit NF4 quantization; float16 compute (T4 has no bf16). Single device:
     # a 1.5B fits a T4 several times over, and single-GPU load avoids
@@ -102,7 +108,7 @@ def main() -> None:
         model=model,
         args=train_args,
         train_dataset=ds,
-        data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
+        data_collator=DataCollatorForSeq2Seq(tokenizer, label_pad_token_id=-100, padding=True),
     )
     trainer.train()
     model.save_pretrained(args.out)
