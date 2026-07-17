@@ -73,6 +73,30 @@ this job needs; uninstall the image's stale `torchao` before
 `PeftModel.from_pretrained`; GGUF export via `convert_hf_to_gguf.py --outtype
 q8_0` (no llama-quantize build needed).
 
+### Reliability baseline (2026-07-16, `make reliability N=10`, gateway/qwen2.5:3b)
+
+pass^k = τ-bench's "ALL k attempts succeed" consistency metric; measured after
+the worker-prompt empty-reply fix (`6153cd0`). Six demo beats × 10 trials:
+
+| case | c/n | pass^1 | pass^8 | avg s |
+|---|---|---|---|---|
+| balance | 10/10 | 1.00 | 1.00 | 25.5 |
+| multi-step spend | 10/10 | 1.00 | 1.00 | 53.1 |
+| 429 mixed help+usage | 10/10 | 1.00 | 1.00 | 24.4 |
+| usage plan | 10/10 | 1.00 | 1.00 | 27.3 |
+| attack containment | 10/10 | 1.00 | 1.00 | 28.3 |
+| spanish balance | 10/10 | 1.00 | 1.00 | 28.2 |
+
+**macro pass^8 = 1.00 (60/60).** Honest caveats: (1) temperature-0 trials are
+correlated, not i.i.d. — this measures deterministic correctness under fixed
+conditions, and overstates robustness to phrasing diversity; (2) the checks
+are structural (right tool called + expected content), not wording quality —
+beat 2's occasional awkward opener still "passes"; (3) latencies under
+sustained back-to-back load ran ~2× the single-shot rehearsal (thermal
+throttling on the M2 — don't pre-heat the machine before the live demo).
+This table is the **before** for the QLoRA-v2 router and answer-tier
+upgrades; re-run the same command for the after.
+
 ---
 
 ## 2. Inference optimization
