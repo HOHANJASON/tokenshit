@@ -190,6 +190,11 @@ async def answer(principal: Principal, question: str, token: str | None = None,
     # planning, routing and tool-selection; a stronger model writes the answer.
     router_model = get_chat_model("router")
     answer_model = get_chat_model("answer")
+    # A distilled router (COPILOT_ROUTER_MODEL) was trained on the BARE prompt
+    # formats from scripts/build_ft_dataset.py — no PLAN::/ROUTE:: markers, no
+    # few-shots, no keyword hints (the fine-tune replaces those band-aids).
+    # Workers stay on the answer tier: the adapter is not a tool-calling model.
+    ft_router = bool(settings.router_model)
     if settings.tools_mode == "remote":
         from ..remote_tools import load_remote_tools
 
@@ -203,10 +208,21 @@ async def answer(principal: Principal, question: str, token: str | None = None,
     from ..planner import load_planner_tools
 
     tools = [*tools, *load_help_tools(), *load_planner_tools(principal, token=token)]
-    worker_agents = _build_workers(principal, router_model, tools)
+    worker_agents = _build_workers(principal, answer_model if ft_router else router_model, tools)
     worker_names = list(worker_agents)
 
     def orchestrator(state: State) -> dict:
+        if ft_router:
+            # Exact training format (see SYS_PLAN in scripts/build_ft_dataset.py).
+            # No ctx: the adapter never saw conversation history in its prompt.
+            prompt = [
+                SystemMessage(content="You are an orchestrator. Break the user's question into "
+                                      "1-3 short, independent sub-tasks, one per line."),
+                HumanMessage(content=state["question"]),
+            ]
+            resp = router_model.invoke(prompt)
+            plan = [_clean_plan_line(l) for l in resp.content.splitlines() if l.strip()]
+            return {"plan": plan[:3] or [state["question"]], "step": 0, "results": []}
         prompt = [
             SystemMessage(content="You are the planner for NexToken, an AI-API platform. Questions "
                                   "are about the user's API usage, token spend, balance, API keys, "
@@ -233,12 +249,26 @@ async def answer(principal: Principal, question: str, token: str | None = None,
         if state["step"] >= len(state["plan"]):
             return {"route": "__done__"}
         subtask = state["plan"][state["step"]]
-        hints = "; ".join(f"{w}: {_WORKER_HINTS[w]}" for w in worker_names if w in _WORKER_HINTS)
-        prompt = [
-            SystemMessage(content="You are a supervisor. Choose exactly one worker to handle the "
-                                  f"sub-task. Workers — {hints}. Reply with only the worker name."),
-            HumanMessage(content=f"ROUTE:: options={','.join(worker_names)} :: task={subtask}"),
-        ]
+        if ft_router:
+            # The planner worker postdates the FT dataset (its options string
+            # was usage,billing,catalog,finance,help), so the adapter cannot
+            # emit "planner". Its worker step is deterministic anyway — route
+            # it deterministically too.
+            if "planner" in worker_agents and re.search(r"\bplan\b|\bbudget\b", subtask, re.I):
+                return {"route": "planner"}
+            # Exact training format (see SYS_ROUTE in scripts/build_ft_dataset.py).
+            prompt = [
+                SystemMessage(content="You are a supervisor. Choose exactly one worker for the "
+                                      "sub-task. Reply with only the worker name."),
+                HumanMessage(content=f"options={','.join(worker_names)} :: task={subtask}"),
+            ]
+        else:
+            hints = "; ".join(f"{w}: {_WORKER_HINTS[w]}" for w in worker_names if w in _WORKER_HINTS)
+            prompt = [
+                SystemMessage(content="You are a supervisor. Choose exactly one worker to handle the "
+                                      f"sub-task. Workers — {hints}. Reply with only the worker name."),
+                HumanMessage(content=f"ROUTE:: options={','.join(worker_names)} :: task={subtask}"),
+            ]
         choice = (router_model.invoke(prompt).content or "").strip().split()[:1]
         route = choice[0] if choice and choice[0] in worker_agents else (worker_names[0] if worker_names else "__done__")
         return {"route": route}
