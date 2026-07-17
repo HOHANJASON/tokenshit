@@ -12,6 +12,10 @@ demo:
 eval:
 	.venv/bin/python -m eval.run_eval
 
+N ?= 5
+reliability:
+	.venv/bin/python -m eval.reliability -n $(N)
+
 test:
 	.venv/bin/python -m pytest -q
 
