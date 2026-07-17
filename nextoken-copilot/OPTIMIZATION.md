@@ -97,6 +97,32 @@ throttling on the M2 — don't pre-heat the machine before the live demo).
 This table is the **before** for the QLoRA-v2 router and answer-tier
 upgrades; re-run the same command for the after.
 
+### v3 router SHIPPED (2026-07-17) — the after-table
+
+Dataset v3 (120 hand-audited route pairs, strict-margin relabeling, union
+options incl. planner) trained with the v2 masked-loss recipe → **96%
+in-sample route accuracy** (arc: v1 22% → v2 83% → v3 96%; the last 13 points
+were pure data cleaning). Merged → GGUF q8 → Ollama → gateway `nxt-router` →
+`COPILOT_ROUTER_MODEL`. Same gate, same battery, FT router live:
+
+| case | baseline avg s | FT router avg s | Δ |
+|---|---|---|---|
+| balance | 25.5 | 20.5 | −20% |
+| multi-step spend | 53.1 | 15.8 | **−70%** |
+| 429 mixed help+usage | 24.4 | 18.2 | −25% |
+| usage plan | 27.3 | 9.3 | **−66%** |
+| attack containment | 28.3 | 39.0 | +38% |
+| spanish balance | 28.2 | 15.8 | −44% |
+
+**macro pass^8 = 1.00 → 1.00 (60/60 both), mean latency 31.1 s → 19.8 s
+(−36%).** The wins come from clean exactly-N plans (no more 3× over-split of
+one-thing questions) and hint-free routing prompts (the FT path deletes the
+few-shots and keyword hints entirely). The attack beat got slower (longer
+plans on adversarial input — it still contains 10/10); one known in-sample
+miss ("on which models" → billing) survives but the aggregator recovers from
+step-0 evidence, so no beat regressed. 51 pytest, eval 8/8 + 8/8 unchanged.
+Rollback remains one env var.
+
 ---
 
 ## 2. Inference optimization
