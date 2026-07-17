@@ -256,11 +256,14 @@ async def answer(principal: Principal, question: str, token: str | None = None,
             # it deterministically too.
             if "planner" in worker_agents and re.search(r"\bplan\b|\bbudget\b", subtask, re.I):
                 return {"route": "planner"}
-            # Exact training format (see SYS_ROUTE in scripts/build_ft_dataset.py).
+            # Exact training format (see SYS_ROUTE/ROUTE_OPTIONS in
+            # scripts/build_ft_dataset.py): the FIXED union options string the
+            # adapter was trained on, not the per-role worker list — the
+            # in-worker_agents guard below rescopes anything unavailable.
             prompt = [
                 SystemMessage(content="You are a supervisor. Choose exactly one worker for the "
                                       "sub-task. Reply with only the worker name."),
-                HumanMessage(content=f"options={','.join(worker_names)} :: task={subtask}"),
+                HumanMessage(content=f"options=usage,billing,catalog,finance,help,planner :: task={subtask}"),
             ]
         else:
             hints = "; ".join(f"{w}: {_WORKER_HINTS[w]}" for w in worker_names if w in _WORKER_HINTS)
