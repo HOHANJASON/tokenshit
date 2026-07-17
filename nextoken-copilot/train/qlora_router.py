@@ -58,10 +58,15 @@ def main() -> None:
     # prompts (v1 adapter planned perfectly but routed everything to one
     # worker); masking concentrates every gradient on the answer.
     def encode(ex):
+        # Template to TEXT then tokenize explicitly: newer tokenizers return an
+        # Encoding object from apply_chat_template(tokenize=True), which Arrow
+        # can't serialize inside datasets.map.
         msgs = ex["messages"]
-        prompt_ids = tokenizer.apply_chat_template(msgs[:-1], add_generation_prompt=True)
-        full_ids = tokenizer.apply_chat_template(msgs)[: args.max_seq]
-        labels = [-100] * len(prompt_ids) + full_ids[len(prompt_ids):]
+        prompt_txt = tokenizer.apply_chat_template(msgs[:-1], tokenize=False, add_generation_prompt=True)
+        full_txt = tokenizer.apply_chat_template(msgs, tokenize=False)
+        prompt_ids = tokenizer(prompt_txt, add_special_tokens=False)["input_ids"]
+        full_ids = tokenizer(full_txt, add_special_tokens=False)["input_ids"][: args.max_seq]
+        labels = ([-100] * len(prompt_ids) + full_ids[len(prompt_ids):])[: len(full_ids)]
         return {"input_ids": full_ids, "labels": labels}
 
     ds = load_dataset("json", data_files=args.data, split="train")
