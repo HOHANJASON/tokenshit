@@ -79,6 +79,8 @@ class State(TypedDict):
     route: str
     results: list[dict]
     answer: str
+    stage_ms: dict[str, float]   # cumulative wall time per graph stage
+    route_fallbacks: int         # supervisor picks the model couldn't resolve
 
 
 def _flatten(content) -> str:
@@ -211,7 +213,13 @@ async def answer(principal: Principal, question: str, token: str | None = None,
     worker_agents = _build_workers(principal, answer_model if ft_router else router_model, tools)
     worker_names = list(worker_agents)
 
+    def _bump(state: State, stage: str, dt: float) -> dict:
+        s = dict(state.get("stage_ms") or {})
+        s[stage] = round(s.get(stage, 0.0) + dt * 1000, 1)
+        return s
+
     def orchestrator(state: State) -> dict:
+        t0 = time.perf_counter()
         if ft_router:
             # Exact training format (see SYS_PLAN in scripts/build_ft_dataset.py).
             # No ctx: the adapter never saw conversation history in its prompt.
@@ -222,7 +230,9 @@ async def answer(principal: Principal, question: str, token: str | None = None,
             ]
             resp = router_model.invoke(prompt)
             plan = [_clean_plan_line(l) for l in resp.content.splitlines() if l.strip()]
-            return {"plan": plan[:3] or [state["question"]], "step": 0, "results": []}
+            return {"plan": plan[:3] or [state["question"]], "step": 0, "results": [],
+                    "stage_ms": _bump(state, "orchestrator", time.perf_counter() - t0),
+                    "route_fallbacks": 0}
         prompt = [
             SystemMessage(content="You are the planner for NexToken, an AI-API platform. Questions "
                                   "are about the user's API usage, token spend, balance, API keys, "
@@ -243,11 +253,15 @@ async def answer(principal: Principal, question: str, token: str | None = None,
         ]
         resp = router_model.invoke(prompt)
         plan = [_clean_plan_line(l) for l in resp.content.splitlines() if l.strip()]
-        return {"plan": plan[:3] or [state["question"]], "step": 0, "results": []}
+        return {"plan": plan[:3] or [state["question"]], "step": 0, "results": [],
+                "stage_ms": _bump(state, "orchestrator", time.perf_counter() - t0),
+                "route_fallbacks": 0}
 
     def supervisor(state: State) -> dict:
+        t0 = time.perf_counter()
         if state["step"] >= len(state["plan"]):
-            return {"route": "__done__"}
+            return {"route": "__done__",
+                    "stage_ms": _bump(state, "supervisor", time.perf_counter() - t0)}
         subtask = state["plan"][state["step"]]
         if ft_router:
             # The planner worker postdates the FT dataset (its options string
@@ -255,7 +269,8 @@ async def answer(principal: Principal, question: str, token: str | None = None,
             # emit "planner". Its worker step is deterministic anyway — route
             # it deterministically too.
             if "planner" in worker_agents and re.search(r"\bplan\b|\bbudget\b", subtask, re.I):
-                return {"route": "planner"}
+                return {"route": "planner",
+                        "stage_ms": _bump(state, "supervisor", time.perf_counter() - t0)}
             # Exact training format (see SYS_ROUTE/ROUTE_OPTIONS in
             # scripts/build_ft_dataset.py): the FIXED union options string the
             # adapter was trained on, not the per-role worker list — the
@@ -273,10 +288,14 @@ async def answer(principal: Principal, question: str, token: str | None = None,
                 HumanMessage(content=f"ROUTE:: options={','.join(worker_names)} :: task={subtask}"),
             ]
         choice = (router_model.invoke(prompt).content or "").strip().split()[:1]
-        route = choice[0] if choice and choice[0] in worker_agents else (worker_names[0] if worker_names else "__done__")
-        return {"route": route}
+        resolved = bool(choice) and choice[0] in worker_agents
+        route = choice[0] if resolved else (worker_names[0] if worker_names else "__done__")
+        return {"route": route,
+                "stage_ms": _bump(state, "supervisor", time.perf_counter() - t0),
+                "route_fallbacks": (state.get("route_fallbacks") or 0) + (0 if resolved else 1)}
 
     async def worker(state: State) -> dict:
+        t0 = time.perf_counter()
         subtask = state["plan"][state["step"]]
         # The planner worker is fully deterministic: its one tool computes every
         # number in code, so there is no reasoning step for a model to flub —
@@ -287,8 +306,9 @@ async def answer(principal: Principal, question: str, token: str | None = None,
             payload = await tool.coroutine(monthly_budget=budget)
             result = {"step": state["step"], "worker": "planner", "subtask": subtask,
                       "output": payload, "tools": ["build_usage_plan"],
-                      "evidence": [payload[:600]]}
-            return {"results": state["results"] + [result], "step": state["step"] + 1}
+                      "evidence": [payload[:600]], "ms": round((time.perf_counter() - t0) * 1000, 1)}
+            return {"results": state["results"] + [result], "step": state["step"] + 1,
+                    "stage_ms": _bump(state, "worker", time.perf_counter() - t0)}
         agent = worker_agents[state["route"]]
         # Small models answer from memory unless the task itself demands a tool.
         nudge = f"{subtask}\nUse your tools to get the real data — do not answer from memory."
@@ -303,11 +323,17 @@ async def answer(principal: Principal, question: str, token: str | None = None,
         # Raw tool outputs ride along so the aggregator keeps concrete details
         # (headers, numbers) that a small model drops from its own summary.
         evidence = [_flatten(m.content)[:600] for m in out["messages"] if isinstance(m, ToolMessage)]
+        # empty_output = worker returned no text AND called no tool (the exact
+        # failure the worker-prompt bug produced); a real per-step health signal.
         result = {"step": state["step"], "worker": state["route"], "subtask": subtask,
-                  "output": output, "tools": tool_names, "evidence": evidence}
-        return {"results": state["results"] + [result], "step": state["step"] + 1}
+                  "output": output, "tools": tool_names, "evidence": evidence,
+                  "ms": round((time.perf_counter() - t0) * 1000, 1),
+                  "empty_output": not output.strip() and not tool_names}
+        return {"results": state["results"] + [result], "step": state["step"] + 1,
+                "stage_ms": _bump(state, "worker", time.perf_counter() - t0)}
 
     def aggregator(state: State) -> dict:
+        t0 = time.perf_counter()
         prompt = [
             SystemMessage(content="You are NexToken's support copilot. Using only the findings, "
                                   "write a concise, direct answer to the user's question, specific "
@@ -324,7 +350,9 @@ async def answer(principal: Principal, question: str, token: str | None = None,
             HumanMessage(content=f"QUESTION:: {state['question']}\nFINDINGS:: "
                                  + json.dumps(state["results"])),
         ]
-        return {"answer": answer_model.invoke(prompt).content}
+        answer = answer_model.invoke(prompt).content
+        return {"answer": answer,
+                "stage_ms": _bump(state, "aggregator", time.perf_counter() - t0)}
 
     graph = StateGraph(State)
     graph.add_node("orchestrator", orchestrator)
@@ -345,16 +373,28 @@ async def answer(principal: Principal, question: str, token: str | None = None,
     if not worker_agents:  # role with no usable tools — should not happen
         return {"answer": "No tools are available for this role.", "plan": [], "results": []}
 
-    final = await app.ainvoke({"question": question, "plan": [], "step": 0, "route": "", "results": [], "answer": ""})
+    final = await app.ainvoke({"question": question, "plan": [], "step": 0, "route": "",
+                               "results": [], "answer": "", "stage_ms": {}, "route_fallbacks": 0})
+    results = final["results"]
+    stage_ms = final.get("stage_ms") or {}
     metrics = {
         "latency_ms": int((time.perf_counter() - started) * 1000),
-        "steps": len(final["results"]),
-        "workers": [r["worker"] for r in final["results"]],
-        "tools_called": [t for r in final["results"] for t in r.get("tools", [])],
+        "steps": len(results),
+        "workers": [r["worker"] for r in results],
+        "tools_called": [t for r in results for t in r.get("tools", [])],
         "tools_mode": settings.tools_mode,
         "llm_mode": settings.llm_mode,
         "vision_used": vision_used,
         "language": lang_name,
+        # Agent-native observability — the signals a generic APM can't see:
+        "router_model": settings.router_model or settings.llm_model,
+        "stage_ms": stage_ms,                                    # per-graph-stage wall time
+        "plan_len": len(final["plan"]),                          # over-splitting detector
+        "route_fallbacks": final.get("route_fallbacks") or 0,    # unresolved supervisor picks
+        "empty_worker_steps": sum(1 for r in results if r.get("empty_output")),
+        "tool_calls": sum(len(r.get("tools") or []) for r in results),
+        "evidence_chars": sum(len(e) for r in results for e in (r.get("evidence") or [])),
+        "context_chars": len(context or ""),                     # cache/prompt-size signal
     }
     safe_answer, findings = enforce(principal, final["answer"])
     result = {"answer": safe_answer, "plan": final["plan"], "results": final["results"],
