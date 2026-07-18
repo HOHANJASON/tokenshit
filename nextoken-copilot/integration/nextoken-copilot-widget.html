@@ -1,0 +1,134 @@
+<!-- ============================================================================
+     NexToken Copilot — customer support widget (drop-in)
+     ----------------------------------------------------------------------------
+     Paste this whole block into app/static/customer.html, just before </body>.
+     It is self-contained (markup + CSS + JS), framework-free, and matches the
+     console's gold theme. It adds a floating launcher (bottom-right) that opens
+     an in-page chat backed by the multi-agent copilot service.
+
+     It is ADDITIVE: it does not touch the existing playground chat or any other
+     markup. Remove the block to remove the feature.
+
+     Two things to set for production (see integration/INTEGRATION.md):
+       1) COPILOT_BASE — where the copilot service is reachable from the browser.
+          "" (empty) means same-origin: use it if the copilot router is mounted
+          into this backend. Otherwise set the copilot host, e.g.
+          "https://copilot.nextoken.ai", and allow this origin in the copilot CORS.
+       2) The copilot must accept the customer's real session JWT
+          (localStorage['nex_customer_token']) — the same token this console
+          already uses. No dev headers in production. See the doc's "Auth seam".
+     ============================================================================ -->
+<div id="nxt-copilot-root">
+<style>
+  #nxt-copilot-launcher{position:fixed;right:24px;bottom:24px;width:58px;height:58px;border:0;border-radius:50%;
+    background:var(--gold,#f4c84b);color:#111;cursor:pointer;box-shadow:0 8px 24px rgba(244,200,75,.4);
+    display:flex;align-items:center;justify-content:center;z-index:9000}
+  #nxt-copilot-launcher .b{position:absolute;top:-3px;right:-3px;width:20px;height:20px;border-radius:50%;
+    background:#12161d;color:var(--gold,#f4c84b);border:1px solid #2b3440;display:flex;align-items:center;justify-content:center;font-size:11px}
+  #nxt-copilot{position:fixed;right:24px;bottom:92px;width:390px;max-width:calc(100vw - 32px);height:590px;
+    max-height:calc(100vh - 120px);background:#0d1015;border:1px solid #2b3440;border-radius:16px;
+    box-shadow:0 18px 50px rgba(0,0,0,.5);display:none;flex-direction:column;overflow:hidden;z-index:9001;
+    font-family:Inter,"Noto Sans TC",system-ui,sans-serif;color:#f4f6f8}
+  #nxt-copilot.open{display:flex}
+  #nxt-copilot .h{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #2b3440;background:#12161d}
+  #nxt-copilot .h .m{width:26px;height:26px;border-radius:7px;background:rgba(244,200,75,.15);color:var(--gold,#f4c84b);display:flex;align-items:center;justify-content:center}
+  #nxt-copilot .h .t{font-weight:700;font-size:14px}
+  #nxt-copilot .h .s{font-size:11px;color:#9ca8b6}
+  #nxt-copilot .h .pill{margin-left:auto;font-size:11px;color:#9ca8b6;border:1px solid #2b3440;border-radius:999px;padding:2px 8px}
+  #nxt-copilot .h .x{border:0;background:transparent;color:#9ca8b6;cursor:pointer;font-size:15px;padding:4px}
+  #nxt-copilot .body{flex:1;overflow-y:auto;padding:14px}
+  #nxt-copilot .msg{margin:0 0 12px;display:flex}
+  #nxt-copilot .bub{max-width:86%;padding:10px 12px;border-radius:12px;font-size:14px;white-space:pre-wrap;word-break:break-word;line-height:1.5}
+  #nxt-copilot .me{margin-left:auto}
+  #nxt-copilot .me .bub{background:rgba(244,200,75,.15);color:#f7e4a8}
+  #nxt-copilot .bot .bub{background:#12161d;border:1px solid #2b3440}
+  #nxt-copilot .sys{color:#9ca8b6;font-size:12px;text-align:center;margin:4px 0 12px}
+  #nxt-copilot .trace{margin-top:8px;font-size:11px;color:#8a95a3;border-top:1px solid #2b3440;padding-top:6px}
+  #nxt-copilot .chips{padding:0 14px 8px;display:flex;flex-wrap:wrap;gap:6px}
+  #nxt-copilot .chip{font-size:12px;background:#12161d;border:1px solid #2b3440;color:#f4f6f8;border-radius:999px;padding:5px 10px;cursor:pointer}
+  #nxt-copilot textarea{flex:1;resize:none;background:#090d12;border:1px solid #2b3440;color:#f4f6f8;border-radius:10px;padding:9px 11px;font:inherit;font-size:14px;max-height:100px}
+  #nxt-copilot .foot{display:flex;gap:8px;padding:10px 14px;border-top:1px solid #2b3440;background:#12161d}
+  #nxt-copilot .snd{width:38px;height:38px;border:0;border-radius:10px;background:var(--gold,#f4c84b);color:#111;cursor:pointer;flex:none;font-size:16px}
+  #nxt-copilot .dots span{display:inline-block;width:5px;height:5px;margin:0 1px;border-radius:50%;background:#9ca8b6;animation:nxtb 1s infinite}
+  #nxt-copilot .dots span:nth-child(2){animation-delay:.15s}#nxt-copilot .dots span:nth-child(3){animation-delay:.3s}
+  @keyframes nxtb{0%,60%,100%{opacity:.3}30%{opacity:1}}
+</style>
+<script>
+(function(){
+  // --- config -------------------------------------------------------------
+  var COPILOT_BASE = "";                       // "" = same-origin; else e.g. "https://copilot.nextoken.ai"
+  var TOKEN_KEY    = "nex_customer_token";     // the console's existing session JWT
+  // ------------------------------------------------------------------------
+
+  var token = localStorage.getItem(TOKEN_KEY);
+  if (!token) return;  // only show the copilot to a signed-in customer
+
+  var esc = function(s){ return (s||"").replace(/[&<>]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]; }); };
+
+  var launcher = document.createElement("button");
+  launcher.id = "nxt-copilot-launcher";
+  launcher.setAttribute("aria-label","Open NexToken Copilot");
+  launcher.innerHTML = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="12" y1="2.5" x2="12" y2="5"/><circle cx="12" cy="2.2" r="1" fill="currentColor" stroke="none"/><rect x="4.5" y="5" width="15" height="11.5" rx="3.5"/><circle cx="9" cy="10.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="10.5" r="1.3" fill="currentColor" stroke="none"/><path d="M9.5 13.8c.7.7 4.3.7 5 0"/><line x1="2.5" y1="9.5" x2="4.5" y2="9.5"/><line x1="19.5" y1="9.5" x2="21.5" y2="9.5"/></svg><span class="b">&#10022;</span>';
+  document.body.appendChild(launcher);
+
+  var w = document.createElement("div");
+  w.id = "nxt-copilot";
+  w.setAttribute("role","dialog");
+  w.innerHTML =
+    '<div class="h"><div class="m">&#10022;</div><div><div class="t">NexToken Copilot</div><div class="s" id="nxt-who"></div></div>' +
+    '<span class="pill" id="nxt-mode"></span><button class="x" id="nxt-x" aria-label="Close">&#10005;</button></div>' +
+    '<div class="body" id="nxt-body"></div><div class="chips" id="nxt-chips"></div>' +
+    '<div class="foot"><textarea id="nxt-q" rows="1" placeholder="Ask about your usage, billing, or docs…"></textarea>' +
+    '<button class="snd" id="nxt-send" aria-label="Send">&#8593;</button></div>';
+  document.body.appendChild(w);
+
+  var body = w.querySelector("#nxt-body"), qEl = w.querySelector("#nxt-q"), chipsEl = w.querySelector("#nxt-chips");
+  var scroll = function(){ body.scrollTop = body.scrollHeight; };
+  var sys  = function(t){ var d=document.createElement("div"); d.className="sys"; d.textContent=t; body.appendChild(d); scroll(); };
+  var user = function(t){ var m=document.createElement("div"); m.className="msg me"; m.innerHTML='<div class="bub">'+esc(t)+'</div>'; body.appendChild(m); scroll(); };
+  var think= function(){ var m=document.createElement("div"); m.className="msg bot"; m.id="nxt-think"; m.innerHTML='<div class="bub"><span class="dots"><span></span><span></span><span></span></span></div>'; body.appendChild(m); scroll(); };
+  var unthink=function(){ var t=document.getElementById("nxt-think"); if(t) t.remove(); };
+
+  function bot(d){
+    var m=document.createElement("div"); m.className="msg bot";
+    var h='<div class="bub">'+esc(d.answer||"");
+    if (d.results && d.results.length){
+      var mtr=d.metrics||{}, tools=(mtr.tools_called||[]).join(", ")||"—";
+      h += '<div class="trace">'+d.results.length+' step(s) · '+(mtr.latency_ms||"?")+' ms · workers: '+
+           (mtr.workers||[]).join(", ")+' · tools: '+tools+' · model: '+(mtr.llm_mode||"")+'</div>';
+      if (mtr.llm_mode) w.querySelector("#nxt-mode").textContent = mtr.llm_mode;
+    }
+    h += '</div>'; m.innerHTML=h; body.appendChild(m); scroll();
+  }
+
+  var convo = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+  async function send(){
+    var q = qEl.value.trim(); if(!q) return; qEl.value=""; user(q); think();
+    try{
+      var r = await fetch(COPILOT_BASE + "/assistant/chat", {
+        method:"POST",
+        headers:{ "content-type":"application/json",
+                  // Identity travels with the customer's real JWT — never a role in the prompt.
+                  "Authorization": "Bearer " + localStorage.getItem(TOKEN_KEY) },
+        body: JSON.stringify({ question:q, conversation_id:convo })
+      });
+      unthink();
+      if(!r.ok){ var t=await r.text(); bot({answer:"("+r.status+") "+t.slice(0,200)}); }
+      else bot(await r.json());
+    }catch(e){ unthink(); bot({answer:"Network error: "+e.message}); }
+  }
+
+  ["How do I authenticate my API requests?","What's my balance?","Why am I getting 429 errors?"].forEach(function(t){
+    var c=document.createElement("button"); c.className="chip"; c.textContent=t;
+    c.onclick=function(){ qEl.value=t; send(); }; chipsEl.appendChild(c);
+  });
+
+  qEl.addEventListener("keydown", function(e){ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); send(); }});
+  w.querySelector("#nxt-send").onclick = send;
+  w.querySelector("#nxt-x").onclick = function(){ w.classList.remove("open"); };
+  launcher.onclick = function(){ w.classList.toggle("open"); if(w.classList.contains("open")) qEl.focus(); };
+  sys("Hi — ask me about your usage, balance, or how to use the API.");
+})();
+</script>
+</div>
+<!-- ===================== end NexToken Copilot widget ======================= -->
